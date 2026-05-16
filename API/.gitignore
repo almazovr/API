@@ -1,0 +1,9 @@
+﻿
+appsettings.Production.json
+*.user
+*.secret
+secrets.json
+
+logs/
+*.log
+temp/

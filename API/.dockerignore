@@ -1,0 +1,9 @@
+﻿**/.dockerignore
+**/.git
+**/.vs
+**/bin
+**/obj
+**/logs
+*.user
+*.lock.json
+*.suo
