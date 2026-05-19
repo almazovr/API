@@ -198,19 +198,11 @@ builder.WebHost.ConfigureKestrel(options =>
     options.Limits.MinResponseDataRate = new MinDataRate(100, TimeSpan.FromSeconds(10));
 });
 
-// ==========================================
-// 🔹 СБОРКА ПРИЛОЖЕНИЯ
-// ==========================================
+
 
 var app = builder.Build();
 
-// ==========================================
-// 🔹 КОНФИГУРАЦИЯ MIDDLEWARE PIPELINE
-// ==========================================
 
-// 🔹 Порядок middleware ВАЖЕН!
-
-// 1. Swagger (только в разработке)
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
