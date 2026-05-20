@@ -5,6 +5,7 @@ using System.Diagnostics;
 using System.Linq;
 using System.Net.Http;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Threading.Tasks;
 
 namespace API.Services
@@ -25,8 +26,9 @@ namespace API.Services
         private static readonly HttpClient _httpClient = new HttpClient();
         private static readonly JsonSerializerOptions _jsonOptions = new()
         {
+            PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,  // ← snake_case для ЮKassa
             PropertyNameCaseInsensitive = true,
-            PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+            DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
         };
 
         /// <summary>

@@ -1,12 +1,15 @@
 ﻿// 📁 API/Controllers/OrderController.cs
 using API.DTOs;
 using API.Models;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using System.Diagnostics;
+using API.Models.YooKassa;  
+using API.Services;
 
 namespace API.Controllers;
-
+[AllowAnonymous]
 [Route("api/[controller]")]
 [ApiController]
 public class OrderController : ControllerBase
@@ -74,6 +77,7 @@ public class OrderController : ControllerBase
         var order = await _context.Orders
             .Include(o => o.User)
             .Include(o => o.Status)
+            .Include(o => o.Payments)
             .Include(o => o.OrderItems)
             .Include(o => o.Cashier)
             .Where(o => o.Id == id)
@@ -330,6 +334,97 @@ public class OrderController : ControllerBase
         {
             Debug.WriteLine($"💥 API: Ошибка GetCashierReport: {ex.Message}");
             return StatusCode(500, new { message = "Ошибка сервера", error = ex.Message });
+        }
+    }
+
+
+    // 🔹 🔹 🔹 НОВЫЙ ЭНДПОИНТ: Проверка статуса оплаты
+    [AllowAnonymous]
+    [HttpGet("{id}/payment-status")]
+    public async Task<IActionResult> GetPaymentStatus(int id)
+    {
+        try
+        {
+            Debug.WriteLine($"🔍 API: Запрос статуса оплаты заказа #{id}");
+
+            // 1. Находим заказ в БД + загружаем платежи
+            var order = await _context.Orders
+                .Include(o => o.Status)
+                .Include(o => o.Payments)  // ← 🔹 КЛЮЧЕВОЕ: загружаем платежи!
+                .FirstOrDefaultAsync(o => o.Id == id);
+
+            if (order == null)
+            {
+                Debug.WriteLine($"⚠️ Заказ #{id} не найден");
+                return NotFound(new { error = "Заказ не найден" });
+            }
+
+            // 2. Ищем платёж ЮKassa для этого заказа
+            var payment = order.Payments
+                .FirstOrDefault(p => !string.IsNullOrEmpty(p.YooKassaPaymentId));
+
+            string paymentId = payment?.YooKassaPaymentId ?? "";
+            string paymentStatus = payment?.Status ?? "pending";
+
+            // 3. 🔹 ОПЦИОНАЛЬНО: Запросить актуальный статус у ЮKassa API
+            // (если платёж ещё не "succeeded" и есть YooKassaPaymentId)
+            if (!string.IsNullOrEmpty(paymentId) && paymentStatus != "succeeded")
+            {
+                try
+                {
+                    // 🔹 Запрашиваем статус у ЮKassa (требуется _yooKassaService в контроллере)
+                    // var yooPayment = await _yooKassaService.GetPaymentAsync(paymentId, CancellationToken.None);
+                    // if (yooPayment != null)
+                    // {
+                    //     paymentStatus = yooPayment.Status;
+                    //     // Обновляем в БД, если статус изменился
+                    //     if (payment != null && payment.Status != paymentStatus)
+                    //     {
+                    //         payment.Status = paymentStatus;
+                    //         payment.UpdatedAt = DateTime.UtcNow;
+                    //         await _context.SaveChangesAsync();
+                    //     }
+                    // }
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine($"⚠️ Не удалось получить статус из ЮKassa: {ex.Message}");
+                    // Продолжаем с локальными данными
+                }
+            }
+
+            // 4. Определяем, оплачен ли заказ
+            const int STATUS_PAID = 11;
+            bool isPaid = order.StatusId == STATUS_PAID || paymentStatus == "succeeded";
+
+            // 5. Если платёж успешен, но статус заказа ещё не обновлён — обновляем
+            if (paymentStatus == "succeeded" && order.StatusId != STATUS_PAID)
+            {
+                order.StatusId = STATUS_PAID;
+                order.UpdatedAt = DateTime.UtcNow;
+                await _context.SaveChangesAsync();
+                Debug.WriteLine($"✅ Заказ #{id} автоматически обновлён на статус {STATUS_PAID}");
+            }
+
+            Debug.WriteLine($"📊 Заказ #{id}: StatusId={order.StatusId}, PaymentStatus={paymentStatus}, IsPaid={isPaid}");
+
+            // 6. Возвращаем ответ в формате, который ожидает WPF
+            return Ok(new
+            {
+                orderId = order.Id.ToString(),
+                paymentId = paymentId,  // ← 🔹 Теперь возвращаем реальный PaymentId!
+                paymentStatus = paymentStatus,
+                orderStatus = order.Status?.Name ?? "Новый",
+                amount = order.TotalAmount,
+                currency = "RUB",
+                paidAt = isPaid ? order.UpdatedAt : (DateTime?)null,
+                isPaid = isPaid  // ← Ключевое поле для WPF!
+            });
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"💥 API: Ошибка GetPaymentStatus: {ex.Message}");
+            return StatusCode(500, new { error = "Ошибка сервера", details = ex.Message });
         }
     }
 

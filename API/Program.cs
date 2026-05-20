@@ -11,12 +11,16 @@ using System.Text;
 using System.Text.Json.Serialization;
 using System.Threading.RateLimiting;
 
+// ==========================================
+// 🔹 1. СОЗДАНИЕ BUILDER
+// ==========================================
 var builder = WebApplication.CreateBuilder(args);
 
 // ==========================================
-// 🔹 НАСТРОЙКА КОНФИГУРАЦИИ
+// 🔹 2. НАСТРОЙКА КОНФИГУРАЦИИ (ДО Build!)
 // ==========================================
 Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+builder.Services.AddHttpClient<YooKassaService>();
 
 builder.Configuration
     .SetBasePath(Directory.GetCurrentDirectory())
@@ -24,67 +28,16 @@ builder.Configuration
     .AddJsonFile($"appsettings.{builder.Environment.EnvironmentName}.json", optional: true)
     .AddEnvironmentVariables();
 
-// ==========================================
-// 🔹 РЕГИСТРАЦИЯ СЕРВИСОВ
-// ==========================================
-
-// 🔹 1. Регистрируем сервис проверки подключения к БД
-builder.Services.AddSingleton<IDatabaseHealthCheck, DatabaseHealthCheck>();
-
-// 🔹 2. Подключение к БД с динамической строкой
-builder.Services.AddDbContext<DiplomContext>((serviceProvider, options) =>
+builder.Services.AddHttpClient<IYooKassaService, YooKassaService>(client =>
 {
-    var healthCheck = serviceProvider.GetRequiredService<IDatabaseHealthCheck>();
-    var connStr = healthCheck.GetWorkingConnectionString();
-
-    if (string.IsNullOrEmpty(connStr))
-    {
-        throw new InvalidOperationException(
-            "❌ Не удалось подключиться к базе данных. Проверьте настройки ConnectionStrings в appsettings.json");
-    }
-
-    options.UseNpgsql(connStr, b =>
-        b.MigrationsAssembly(typeof(DiplomContext).Assembly.FullName));
+    client.Timeout = TimeSpan.FromSeconds(30); 
 });
 
-// 🔹 3. Регистрация контроллеров с настройками JSON
-builder.Services.AddControllers()
-    .AddJsonOptions(options =>
-    {
-        options.JsonSerializerOptions.PropertyNamingPolicy = null;
-        options.JsonSerializerOptions.PropertyNameCaseInsensitive = true;
-        options.JsonSerializerOptions.DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull;
-        options.JsonSerializerOptions.ReferenceHandler = ReferenceHandler.IgnoreCycles;
-    });
+// ==========================================
+// 🔹 3. РЕГИСТРАЦИЯ ВСЕХ СЕРВИСОВ (ДО Build!)
+// ==========================================
 
-// 🔹 4. Регистрация сервисов приложения
-builder.Services.AddScoped<IEmailService, EmailService>();
-
-// 🔹 5. Настройка JWT Authentication
-var jwtSettings = builder.Configuration.GetSection("JwtSettings");
-var secretKey = jwtSettings["SecretKey"] ?? throw new InvalidOperationException("JwtSettings:SecretKey не настроен!");
-
-builder.Services.AddAuthentication(options =>
-{
-    options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
-    options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
-})
-.AddJwtBearer(options =>
-{
-    options.TokenValidationParameters = new TokenValidationParameters
-    {
-        ValidateIssuer = true,
-        ValidateAudience = true,
-        ValidateLifetime = true,
-        ValidateIssuerSigningKey = true,
-        ValidIssuer = jwtSettings["Issuer"],
-        ValidAudience = jwtSettings["Audience"],
-        IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(secretKey)),
-        ClockSkew = TimeSpan.Zero
-    };
-});
-
-// 🔹 6. Регистрация Swagger с поддержкой авторизации
+// 🔹 Swagger & Endpoints
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(c =>
 {
@@ -110,37 +63,83 @@ builder.Services.AddSwaggerGen(c =>
         {
             new OpenApiSecurityScheme
             {
-                Reference = new OpenApiReference
-                {
-                    Type = ReferenceType.SecurityScheme,
-                    Id = "Bearer"
-                }
+                Reference = new OpenApiReference { Type = ReferenceType.SecurityScheme, Id = "Bearer" }
             },
             Array.Empty<string>()
         }
     });
 });
 
-// 🔹 7. Настройка CORS
+// 🔹 Контроллеры + настройки JSON
+builder.Services.AddControllers()
+    .AddJsonOptions(options =>
+    {
+        options.JsonSerializerOptions.PropertyNamingPolicy = null;
+        options.JsonSerializerOptions.PropertyNameCaseInsensitive = true;
+        options.JsonSerializerOptions.DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull;
+        options.JsonSerializerOptions.ReferenceHandler = ReferenceHandler.IgnoreCycles;
+    });
+
+// 🔹 Проверка БД
+builder.Services.AddSingleton<IDatabaseHealthCheck, DatabaseHealthCheck>();
+
+// 🔹 DbContext с динамической строкой подключения
+builder.Services.AddDbContext<DiplomContext>((serviceProvider, options) =>
+{
+    var healthCheck = serviceProvider.GetRequiredService<IDatabaseHealthCheck>();
+    var connStr = healthCheck.GetWorkingConnectionString();
+
+    if (string.IsNullOrEmpty(connStr))
+        throw new InvalidOperationException("❌ Не удалось подключиться к БД. Проверьте ConnectionStrings в appsettings.json");
+
+    options.UseNpgsql(connStr, b => b.MigrationsAssembly(typeof(DiplomContext).Assembly.FullName));
+});
+
+// 🔹 Сервисы приложения
+builder.Services.AddScoped<IEmailService, EmailService>();
+
+// 🔹 JWT Authentication
+var jwtSettings = builder.Configuration.GetSection("JwtSettings");
+var secretKey = jwtSettings["SecretKey"] ?? throw new InvalidOperationException("JwtSettings:SecretKey не настроен!");
+
+builder.Services.AddAuthentication(options =>
+{
+    options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
+    options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
+})
+.AddJwtBearer(options =>
+{
+    options.TokenValidationParameters = new TokenValidationParameters
+    {
+        ValidateIssuer = true,
+        ValidateAudience = true,
+        ValidateLifetime = true,
+        ValidateIssuerSigningKey = true,
+        ValidIssuer = jwtSettings["Issuer"],
+        ValidAudience = jwtSettings["Audience"],
+        IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(secretKey)),
+        ClockSkew = TimeSpan.Zero
+    };
+});
+
+// 🔹 CORS
 var corsOrigins = builder.Configuration.GetSection("CorsSettings:AllowedOrigins").Get<string[]>()
                   ?? new[] { "http://localhost:7001", "http://localhost:5173" };
 
 builder.Services.AddCors(options =>
 {
-    options.AddPolicy("AllowClients", builder =>
+    options.AddPolicy("AllowClients", policy =>
     {
-        builder
-            .WithOrigins(corsOrigins)
-            .AllowAnyMethod()
-            .AllowAnyHeader()
-            .AllowCredentials();
+        policy.WithOrigins(corsOrigins)
+              .AllowAnyMethod()
+              .AllowAnyHeader()
+              .AllowCredentials();
     });
 });
 
-// 🔹 8. 🔹 🔹 🔹 RATE LIMITING (ВСТРОЕННЫЙ В .NET 9 — ПАКЕТ НЕ НУЖЕН!)
+// 🔹 Rate Limiting
 builder.Services.AddRateLimiter(options =>
 {
-    // 🔹 Глобальный лимит: 100 запросов в минуту с одного IP
     options.AddFixedWindowLimiter("fixed", config =>
     {
         config.PermitLimit = 100;
@@ -149,60 +148,53 @@ builder.Services.AddRateLimiter(options =>
         config.QueueLimit = 0;
     });
 
-    // 🔹 Более строгий лимит для авторизации (защита от подбора паролей)
     options.AddFixedWindowLimiter("auth", config =>
     {
-        config.PermitLimit = 5;  // Всего 5 попыток входа в минуту!
+        config.PermitLimit = 5;
         config.Window = TimeSpan.FromMinutes(1);
         config.QueueLimit = 0;
     });
 
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
 
-    // 🔹 Применяем лимиты по IP
     options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(context =>
     {
-        // 🔹 Строгие лимиты для эндпоинтов авторизации
         if (context.Request.Path.StartsWithSegments("/api/auth"))
         {
             return RateLimitPartition.GetFixedWindowLimiter(
                 context.Connection.RemoteIpAddress?.ToString() ?? "anonymous",
-                _ => new FixedWindowRateLimiterOptions
-                {
-                    PermitLimit = 5,
-                    Window = TimeSpan.FromMinutes(1)
-                });
+                _ => new FixedWindowRateLimiterOptions { PermitLimit = 5, Window = TimeSpan.FromMinutes(1) });
         }
 
-        // 🔹 Обычные лимиты для остальных эндпоинтов
         return RateLimitPartition.GetFixedWindowLimiter(
             context.Connection.RemoteIpAddress?.ToString() ?? "anonymous",
-            _ => new FixedWindowRateLimiterOptions
-            {
-                PermitLimit = 100,
-                Window = TimeSpan.FromMinutes(1)
-            });
+            _ => new FixedWindowRateLimiterOptions { PermitLimit = 100, Window = TimeSpan.FromMinutes(1) });
     });
 });
 
-// 🔹 9. Фоновый мониторинг БД
+// 🔹 Фоновые сервисы
 builder.Services.AddHostedService<DatabaseMonitorService>();
 
-// 🔹 10. Ограничения Kestrel (защита от перегрузки)
+// 🔹 Kestrel limits
 builder.WebHost.ConfigureKestrel(options =>
 {
     options.Limits.MaxConcurrentConnections = 100;
     options.Limits.MaxConcurrentUpgradedConnections = 10;
-    options.Limits.MaxRequestBodySize = 10 * 1024 * 1024; // 10 MB
+    options.Limits.MaxRequestBodySize = 10 * 1024 * 1024;
     options.Limits.MinRequestBodyDataRate = new MinDataRate(100, TimeSpan.FromSeconds(10));
     options.Limits.MinResponseDataRate = new MinDataRate(100, TimeSpan.FromSeconds(10));
 });
 
-
-
+// ==========================================
+// 🔹 4. ПОСТРОЕНИЕ ПРИЛОЖЕНИЯ (ТЕПЕРЬ МОЖНО!)
+// ==========================================
 var app = builder.Build();
 
+// ==========================================
+// 🔹 5. НАСТРОЙКА MIDDLEWARE (ПОСЛЕ Build!)
+// ==========================================
 
+// 🔹 Swagger (только в Development)
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
@@ -213,7 +205,7 @@ if (app.Environment.IsDevelopment())
     });
 }
 
-// 2. Перенаправление корня на Swagger
+// 🔹 Редирект с "/" на "/swagger"
 app.Use(async (context, next) =>
 {
     if (context.Request.Path == "/")
@@ -224,22 +216,20 @@ app.Use(async (context, next) =>
     await next();
 });
 
-// 3. CORS — ДО UseAuthorization!
+// 🔹 CORS — ДО UseAuthorization!
 app.UseCors("AllowClients");
 
-// 4. HTTPS редирект
+// 🔹 HTTPS редирект
 app.UseHttpsRedirection();
 
-// 🔹 5. 🔹 🔹 🔹 RATE LIMITING — ДО аутентификации!
+// 🔹 Rate Limiting — ДО аутентификации!
 app.UseRateLimiter();
 
-// 6. Аутентификация — ДО Authorization!
+// 🔹 Аутентификация и авторизация
 app.UseAuthentication();
-
-// 7. Авторизация
 app.UseAuthorization();
 
-// 🔹 8. Middleware для проверки подключения к БД
+// 🔹 Middleware проверки БД для /api/* (кроме /api/health)
 app.Use(async (context, next) =>
 {
     if (context.Request.Path.StartsWithSegments("/api") &&
@@ -260,10 +250,12 @@ app.Use(async (context, next) =>
     await next();
 });
 
-// 9. Маппинг контроллеров
+// ==========================================
+// 🔹 6. МАППИНГ ЭНДПОИНТОВ
+// ==========================================
 app.MapControllers();
 
-// 🔹 10. Endpoint для проверки здоровья БД
+// 🔹 Health check БД
 app.MapGet("/health/db", async (IDatabaseHealthCheck healthCheck) =>
 {
     var isHealthy = await healthCheck.CheckDatabaseConnectionAsync();
@@ -282,15 +274,13 @@ app.MapGet("/health/db", async (IDatabaseHealthCheck healthCheck) =>
 app.MapGet("/health", () => Results.Ok(new { status = "ok", timestamp = DateTime.UtcNow }));
 
 // ==========================================
-// 🔹 ЗАПУСК
+// 🔹 7. ЗАПУСК
 // ==========================================
-
 app.Run();
 
 // ==========================================
 // 🔹 ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ
 // ==========================================
-
 static string ExtractHost(string? connStr)
 {
     if (string.IsNullOrEmpty(connStr)) return "unknown";

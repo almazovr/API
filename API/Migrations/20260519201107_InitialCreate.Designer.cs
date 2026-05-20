@@ -12,8 +12,8 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace API.Migrations
 {
     [DbContext(typeof(DiplomContext))]
-    [Migration("20260515185812_AddCashierIdToOrder")]
-    partial class AddCashierIdToOrder
+    [Migration("20260519201107_InitialCreate")]
+    partial class InitialCreate
     {
         /// <inheritdoc />
         protected override void BuildTargetModel(ModelBuilder modelBuilder)
@@ -188,6 +188,10 @@ namespace API.Migrations
 
                     NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
 
+                    b.Property<int?>("CashierId")
+                        .HasColumnType("integer")
+                        .HasColumnName("cashier_id");
+
                     b.Property<string>("Comment")
                         .HasColumnType("text")
                         .HasColumnName("comment");
@@ -204,7 +208,7 @@ namespace API.Migrations
 
                     b.Property<decimal>("TotalAmount")
                         .HasPrecision(10, 2)
-                        .HasColumnType("numeric(10,2)")
+                        .HasColumnType("decimal(10,2)")
                         .HasColumnName("total_amount");
 
                     b.Property<DateTime?>("UpdatedAt")
@@ -219,6 +223,8 @@ namespace API.Migrations
 
                     b.HasKey("Id")
                         .HasName("orders_pkey");
+
+                    b.HasIndex("CashierId");
 
                     b.HasIndex("StatusId");
 
@@ -312,6 +318,62 @@ namespace API.Migrations
                         .IsUnique();
 
                     b.ToTable("order_statuses", (string)null);
+                });
+
+            modelBuilder.Entity("API.Models.Payment", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasColumnName("id");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<decimal>("Amount")
+                        .HasColumnType("decimal(10,2)")
+                        .HasColumnName("amount");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at")
+                        .HasDefaultValueSql("now()");
+
+                    b.Property<string>("Currency")
+                        .IsRequired()
+                        .HasMaxLength(3)
+                        .HasColumnType("character varying(3)")
+                        .HasColumnName("currency");
+
+                    b.Property<int>("OrderId")
+                        .HasColumnType("integer")
+                        .HasColumnName("order_id");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)")
+                        .HasColumnName("status");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.Property<string>("YooKassaPaymentId")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("yookassa_payment_id");
+
+                    b.HasKey("Id")
+                        .HasName("payments_pkey");
+
+                    b.HasIndex(new[] { "OrderId" }, "idx_payments_order_id");
+
+                    b.HasIndex(new[] { "YooKassaPaymentId" }, "payments_yookassa_payment_id_key")
+                        .IsUnique();
+
+                    b.ToTable("payments", (string)null);
                 });
 
             modelBuilder.Entity("API.Models.ProductCategory", b =>
@@ -701,6 +763,12 @@ namespace API.Migrations
 
             modelBuilder.Entity("API.Models.Order", b =>
                 {
+                    b.HasOne("API.Models.User", "Cashier")
+                        .WithMany()
+                        .HasForeignKey("CashierId")
+                        .OnDelete(DeleteBehavior.SetNull)
+                        .HasConstraintName("orders_cashier_id_fkey");
+
                     b.HasOne("API.Models.OrderStatus", "Status")
                         .WithMany("Orders")
                         .HasForeignKey("StatusId")
@@ -712,6 +780,8 @@ namespace API.Migrations
                         .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.SetNull)
                         .HasConstraintName("orders_user_id_fkey");
+
+                    b.Navigation("Cashier");
 
                     b.Navigation("Status");
 
@@ -736,6 +806,18 @@ namespace API.Migrations
                     b.Navigation("Order");
 
                     b.Navigation("Product");
+                });
+
+            modelBuilder.Entity("API.Models.Payment", b =>
+                {
+                    b.HasOne("API.Models.Order", "Order")
+                        .WithMany("Payments")
+                        .HasForeignKey("OrderId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("payments_order_id_fkey");
+
+                    b.Navigation("Order");
                 });
 
             modelBuilder.Entity("API.Models.Review", b =>
@@ -810,6 +892,8 @@ namespace API.Migrations
             modelBuilder.Entity("API.Models.Order", b =>
                 {
                     b.Navigation("OrderItems");
+
+                    b.Navigation("Payments");
                 });
 
             modelBuilder.Entity("API.Models.OrderStatus", b =>

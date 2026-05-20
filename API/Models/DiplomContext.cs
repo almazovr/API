@@ -8,15 +8,12 @@ namespace API.Models;
 
 public partial class DiplomContext : DbContext
 {
-    public DiplomContext()
-    {
-    }
+    public DiplomContext() { }
 
-    public DiplomContext(DbContextOptions<DiplomContext> options)
-        : base(options)
-    {
-    }
+    public DiplomContext(DbContextOptions<DiplomContext> options) : base(options) { }
 
+    // 🔹 🔹 🔹 ТАБЛИЦЫ
+    public virtual DbSet<Payment> Payments { get; set; }
     public virtual DbSet<Cart> Carts { get; set; }
     public virtual DbSet<CartItem> CartItems { get; set; }
     public virtual DbSet<Favorite> Favorites { get; set; }
@@ -29,16 +26,58 @@ public partial class DiplomContext : DbContext
     public virtual DbSet<Role> Roles { get; set; }
     public virtual DbSet<User> Users { get; set; }
     public virtual DbSet<EmailVerificationCode> EmailVerificationCodes { get; set; }
-
-    // 🔹 🔹 🔹 НОВОЕ: Таблица истории движений склада
     public virtual DbSet<StockMovement> StockMovements { get; set; }
 
     protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
-#warning To protect potentially sensitive information in your connection string, you should move it out of source code. You can avoid scaffolding the connection string by using the Name= syntax to read it from configuration - see https://go.microsoft.com/fwlink/?linkid=2131148. For more guidance on storing connection strings, see https://go.microsoft.com/fwlink/?LinkId=723263.
+#warning To protect potentially sensitive information in your connection string, you should move it out of source code.
         => optionsBuilder.UseNpgsql("Host=localhost;Port=5432;Database=diplom;Username=postgres;Password=1234");
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
+        // ============================================================================
+        // 🔹 🔹 🔹 НОВАЯ КОНФИГУРАЦИЯ: Payment (связь с ЮKassa)
+        // ============================================================================
+        modelBuilder.Entity<Payment>(entity =>
+        {
+            entity.HasKey(e => e.Id).HasName("payments_pkey");
+            entity.ToTable("payments");
+
+            // 🔹 Индексы для ускорения поиска
+            entity.HasIndex(e => e.YooKassaPaymentId, "payments_yookassa_payment_id_key").IsUnique();
+            entity.HasIndex(e => e.OrderId, "idx_payments_order_id");
+
+            // 🔹 Свойства с snake_case колонками
+            entity.Property(e => e.Id).HasColumnName("id");
+            entity.Property(e => e.OrderId).HasColumnName("order_id");
+            entity.Property(e => e.YooKassaPaymentId)
+                .HasMaxLength(100)
+                .HasColumnName("yookassa_payment_id");
+            entity.Property(e => e.Status)
+                .HasMaxLength(50)
+                .HasColumnName("status");
+            entity.Property(e => e.Amount)
+                .HasColumnType("decimal(10,2)")
+                .HasColumnName("amount");
+            entity.Property(e => e.Currency)
+                .HasMaxLength(3)
+                .HasColumnName("currency");
+            entity.Property(e => e.CreatedAt)
+                .HasDefaultValueSql("now()")
+                .HasColumnName("created_at");
+            entity.Property(e => e.UpdatedAt)
+                .HasColumnName("updated_at");
+
+            // 🔹 Связь: Payment → Order (CASCADE: при удалении заказа удаляются платежи)
+            entity.HasOne(d => d.Order)
+                .WithMany(p => p.Payments)
+                .HasForeignKey(d => d.OrderId)
+                .OnDelete(DeleteBehavior.Cascade)
+                .HasConstraintName("payments_order_id_fkey");
+        });
+
+        // ============================================================================
+        // 🔹 Cart
+        // ============================================================================
         modelBuilder.Entity<Cart>(entity =>
         {
             entity.HasKey(e => e.Id).HasName("cart_pkey");
@@ -53,20 +92,27 @@ public partial class DiplomContext : DbContext
                 .HasConstraintName("cart_user_id_fkey");
         });
 
+        // ============================================================================
+        // 🔹 EmailVerificationCode
+        // ============================================================================
+        // 🔹 EmailVerificationCode
         modelBuilder.Entity<EmailVerificationCode>(entity =>
         {
             entity.HasKey(e => e.Id);
             entity.ToTable("email_verification_codes");
-            entity.Property(e => e.Id).HasColumnName("id");
-            entity.Property(e => e.Email).IsRequired().HasMaxLength(100).HasColumnName("email");
-            entity.Property(e => e.Code).IsRequired().HasMaxLength(6).HasColumnName("code");
-            entity.Property(e => e.ExpiresAt).IsRequired().HasColumnName("expires_at");
-            entity.Property(e => e.IsUsed).HasDefaultValue(false).HasColumnName("is_used");
-            entity.Property(e => e.CreatedAt).HasDefaultValueSql("now()").HasColumnName("created_at");
-            entity.HasIndex(e => e.Email).HasDatabaseName("idx_email_verification_codes_email");
-            entity.HasIndex(e => e.Code).IsUnique().HasDatabaseName("idx_email_verification_codes_code");
+
+            // 🔴 ИЗМЕНИТЕ: укажите имена колонок КАК В БАЗЕ (с заглавных)
+            entity.Property(e => e.Id).HasColumnName("Id");
+            entity.Property(e => e.Email).HasColumnName("Email");
+            entity.Property(e => e.Code).HasColumnName("Code");
+            entity.Property(e => e.ExpiresAt).HasColumnName("ExpiresAt");
+            entity.Property(e => e.IsUsed).HasColumnName("IsUsed");
+            entity.Property(e => e.CreatedAt).HasColumnName("CreatedAt");
         });
 
+        // ============================================================================
+        // 🔹 CartItem
+        // ============================================================================
         modelBuilder.Entity<CartItem>(entity =>
         {
             entity.HasKey(e => e.Id).HasName("cart_items_pkey");
@@ -84,6 +130,9 @@ public partial class DiplomContext : DbContext
                 .HasConstraintName("cart_items_product_id_fkey");
         });
 
+        // ============================================================================
+        // 🔹 Favorite
+        // ============================================================================
         modelBuilder.Entity<Favorite>(entity =>
         {
             entity.HasKey(e => e.Id).HasName("favorites_pkey");
@@ -101,6 +150,9 @@ public partial class DiplomContext : DbContext
                 .HasConstraintName("favorites_user_id_fkey");
         });
 
+        // ============================================================================
+        // 🔹 Order
+        // ============================================================================
         modelBuilder.Entity<Order>(entity =>
         {
             entity.HasKey(e => e.Id).HasName("orders_pkey");
@@ -113,34 +165,39 @@ public partial class DiplomContext : DbContext
             entity.Property(e => e.TotalAmount).HasPrecision(10, 2).HasColumnName("total_amount");
             entity.Property(e => e.UpdatedAt).HasDefaultValueSql("now()").HasColumnName("updated_at");
             entity.Property(e => e.UserId).HasColumnName("user_id");
+            entity.Property(e => e.CashierId).HasColumnName("cashier_id"); // 🔹 Исправлено: snake_case
 
-            // 🔹 🔹 🔹 НОВОЕ: Поле CashierId
-            entity.Property(e => e.CashierId).HasColumnName("CashierId");
-
-
-
-            // 🔹 Существующая связь: заказ → клиент (User)
+            // 🔹 Связь: заказ → клиент (User)
             entity.HasOne(d => d.User)
                 .WithMany(p => p.Orders)
                 .HasForeignKey(d => d.UserId)
                 .OnDelete(DeleteBehavior.SetNull)
                 .HasConstraintName("orders_user_id_fkey");
 
-            // 🔹 🔹 🔹 НОВАЯ связь: заказ → кассир (Cashier)
+            // 🔹 Связь: заказ → кассир (Cashier)
             entity.HasOne(d => d.Cashier)
-                .WithMany()  // 🔹 Не добавляем навигацию User.Orders, чтобы не конфликтовать с клиентом
+                .WithMany()
                 .HasForeignKey(d => d.CashierId)
                 .OnDelete(DeleteBehavior.SetNull)
                 .HasConstraintName("orders_cashier_id_fkey");
 
-            // 🔹 Существующая связь: заказ → статус
+            // 🔹 Связь: заказ → статус
             entity.HasOne(d => d.Status)
                 .WithMany(p => p.Orders)
                 .HasForeignKey(d => d.StatusId)
                 .OnDelete(DeleteBehavior.SetNull)
                 .HasConstraintName("orders_status_id_fkey");
+
+            // 🔹 🔹 🔹 НОВАЯ СВЯЗЬ: заказ → платежи ЮKassa
+            entity.HasMany(o => o.Payments)
+                .WithOne(p => p.Order)
+                .HasForeignKey(p => p.OrderId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
 
+        // ============================================================================
+        // 🔹 OrderItem
+        // ============================================================================
         modelBuilder.Entity<OrderItem>(entity =>
         {
             entity.HasKey(e => e.Id).HasName("order_items_pkey");
@@ -162,6 +219,9 @@ public partial class DiplomContext : DbContext
                 .HasConstraintName("order_items_product_id_fkey");
         });
 
+        // ============================================================================
+        // 🔹 OrderStatus
+        // ============================================================================
         modelBuilder.Entity<OrderStatus>(entity =>
         {
             entity.HasKey(e => e.Id).HasName("order_statuses_pkey");
@@ -173,6 +233,9 @@ public partial class DiplomContext : DbContext
             entity.Property(e => e.Name).HasMaxLength(100).HasColumnName("name");
         });
 
+        // ============================================================================
+        // 🔹 Product
+        // ============================================================================
         modelBuilder.Entity<Product>(entity =>
         {
             entity.HasKey(e => e.Id).HasName("products_pkey");
@@ -188,7 +251,6 @@ public partial class DiplomContext : DbContext
             entity.Property(e => e.NewPrice).HasPrecision(10, 2).HasColumnName("new_price");
             entity.Property(e => e.Price).HasPrecision(10, 2).HasColumnName("price");
             entity.Property(e => e.UpdatedAt).HasDefaultValueSql("now()").HasColumnName("updated_at");
-            // 🔹 Добавлены поля склада
             entity.Property(e => e.StockQuantity).HasDefaultValue(0).HasColumnName("stock_quantity");
             entity.Property(e => e.MinStockThreshold).HasDefaultValue(5).HasColumnName("min_stock_threshold");
 
@@ -198,6 +260,9 @@ public partial class DiplomContext : DbContext
                 .HasConstraintName("products_category_id_fkey");
         });
 
+        // ============================================================================
+        // 🔹 ProductCategory
+        // ============================================================================
         modelBuilder.Entity<ProductCategory>(entity =>
         {
             entity.HasKey(e => e.Id).HasName("product_categories_pkey");
@@ -211,6 +276,9 @@ public partial class DiplomContext : DbContext
             entity.Property(e => e.Slug).HasMaxLength(100).HasColumnName("slug");
         });
 
+        // ============================================================================
+        // 🔹 Review
+        // ============================================================================
         modelBuilder.Entity<Review>(entity =>
         {
             entity.HasKey(e => e.Id).HasName("reviews_pkey");
@@ -230,6 +298,9 @@ public partial class DiplomContext : DbContext
                 .HasConstraintName("reviews_user_id_fkey");
         });
 
+        // ============================================================================
+        // 🔹 Role
+        // ============================================================================
         modelBuilder.Entity<Role>(entity =>
         {
             entity.HasKey(e => e.Id).HasName("roles_pkey");
@@ -241,6 +312,9 @@ public partial class DiplomContext : DbContext
             entity.Property(e => e.Name).HasMaxLength(50).HasColumnName("name");
         });
 
+        // ============================================================================
+        // 🔹 User
+        // ============================================================================
         modelBuilder.Entity<User>(entity =>
         {
             entity.HasKey(e => e.Id).HasName("users_pkey");
@@ -262,18 +336,18 @@ public partial class DiplomContext : DbContext
                 .HasConstraintName("users_role_id_fkey");
         });
 
-        // 🔹 🔹 🔹 НОВАЯ конфигурация для StockMovement
+        // ============================================================================
+        // 🔹 StockMovement
+        // ============================================================================
         modelBuilder.Entity<StockMovement>(entity =>
         {
             entity.HasKey(e => e.Id).HasName("stock_movements_pkey");
             entity.ToTable("stock_movements");
 
-            // 🔹 Индексы для ускорения поиска
             entity.HasIndex(e => e.ProductId).HasDatabaseName("idx_stock_movements_product_id");
             entity.HasIndex(e => e.UserId).HasDatabaseName("idx_stock_movements_user_id");
             entity.HasIndex(e => e.CreatedAt).HasDatabaseName("idx_stock_movements_created_at");
 
-            // 🔹 Свойства с snake_case колонками
             entity.Property(e => e.Id).HasColumnName("id");
             entity.Property(e => e.ProductId).HasColumnName("product_id");
             entity.Property(e => e.UserId).HasColumnName("user_id");
@@ -282,14 +356,12 @@ public partial class DiplomContext : DbContext
             entity.Property(e => e.Comment).HasMaxLength(500).HasColumnName("comment");
             entity.Property(e => e.CreatedAt).HasDefaultValueSql("now()").HasColumnName("created_at");
 
-            // 🔹 Связь с Product (CASCADE: при удалении товара удаляется история)
             entity.HasOne(d => d.Product)
                 .WithMany(p => p.StockMovements)
                 .HasForeignKey(d => d.ProductId)
                 .OnDelete(DeleteBehavior.Cascade)
                 .HasConstraintName("stock_movements_product_id_fkey");
 
-            // 🔹 Связь с User (RESTRICT: нельзя удалить пользователя с историей операций)
             entity.HasOne(d => d.User)
                 .WithMany()
                 .HasForeignKey(d => d.UserId)
@@ -298,14 +370,6 @@ public partial class DiplomContext : DbContext
         });
 
         OnModelCreatingPartial(modelBuilder);
-    }
-
-    private readonly IDatabaseHealthCheck _healthCheck;
-
-    public DiplomContext(DbContextOptions<DiplomContext> options, IDatabaseHealthCheck healthCheck)
-        : base(options)
-    {
-        _healthCheck = healthCheck;
     }
 
     partial void OnModelCreatingPartial(ModelBuilder modelBuilder);
